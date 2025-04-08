@@ -39,9 +39,10 @@ def find_matching_cocktails(user_ingredients, all_cocktails):
     matches = []
     for drink in all_cocktails:
         drink_ings = extract_ingredients(drink)
-        if all(ing in user_ingredients for ing in drink_ings):
+        if all(ing in drink_ings for ing in user_ingredients):  # reversed logic
             matches.append(drink)
     return matches
+
 
 # UI: Ingredient selection
 st.markdown("### What ingredients do you have?")
