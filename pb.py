@@ -31,7 +31,7 @@ def extract_ingredients(cocktail):
     for i in range(1, 16):
         ing = cocktail.get(f"strIngredient{i}")
         if ing and ing.strip():
-            ingredients.append(ing.strip())
+            ingredients.append(ing.strip().lower().replace(" ", "_"))
     return ingredients
 
 # --- Get matching cocktails ---
@@ -59,7 +59,8 @@ if st.button("🍹 Make me a cocktail!"):
     else:
         with st.spinner("Searching delicious options..."):
             all_cocktails = fetch_all_cocktails()
-            possible = find_matching_cocktails(selected_ingredients, all_cocktails)
+            normalized_ingredients = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
+            possible = find_matching_cocktails(normalized_ingredients, all_cocktails)
 
         if not possible:
             st.error("😢 Sorry, no cocktails can be made with those ingredients.")
