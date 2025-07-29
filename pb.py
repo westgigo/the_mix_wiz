@@ -87,11 +87,11 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
 col_title, col_clear = st.columns([10, 1])
 with col_title:
     st.markdown("### What ingredients do you have?")
-with col_clear:
-    clear_clicked = st.button("🔄", help="Clear ingredient selection")
-    if clear_clicked:
-        st.session_state["selected_ingredients"] = []
-        st.rerun()
+#with col_clear:
+#    clear_clicked = st.button("🔄", help="Clear ingredient selection")
+#    if clear_clicked:
+#        st.session_state["selected_ingredients"] = []
+#        st.rerun()
 
 ingredients = fetch_ingredients()
 selected_ingredients = st.multiselect(
@@ -110,31 +110,19 @@ col1, col2, col3, col4 = st.columns(4)
 if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of your ingredients (or none)"):
     if normalized:
         with st.spinner("Mixing magic with your ingredients..."):
-            joined = ",".join(normalized)
-            url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
-
-            try:
-                response = requests.get(url)
-                data = response.json()
-                drinks = data.get("drinks")
-                if isinstance(drinks, list):
-                    ids = [drink["idDrink"] for drink in drinks if isinstance(drink, dict)]
-                else:
-                    ids = []
-            except Exception as e:
-                st.error(f"⚠️ API error: {e}")
-                ids = []
-
+            # Fetch ALL cocktails
             all_cocktails = fetch_all_cocktails()
-            filtered = [d for d in all_cocktails if d['idDrink'] in ids]
 
-        if not filtered:
-            st.error("😥 No cocktails found with those ingredients.")
+            # Match ANY of the selected ingredients
+            matching = [c for c in all_cocktails if any(i in normalized for i in extract_ingredients(c))]
+
+        if not matching:
+            st.error("😥 No cocktails found that use any of those ingredients.")
         else:
-            chosen = random.choice(filtered)
+            chosen = random.choice(matching)
             show_cocktail(chosen, normalized, show_missing=True)
-
     else:
+        # No ingredients selected → fallback to true random
         with st.spinner("Mixing magic at random..."):
             try:
                 response = requests.get("https://www.thecocktaildb.com/api/json/v1/1/random.php")
@@ -148,6 +136,7 @@ if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of you
             st.error("😵 Couldn't fetch a random cocktail.")
         else:
             show_cocktail(cocktail, user_ingredients=[], show_missing=False)
+
 
 # --- Show All I Can Make ---
 if col2.button("📋 Show all I can make", help="Only cocktails you can make 100% with what you selected"):
