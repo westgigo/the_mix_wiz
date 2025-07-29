@@ -62,12 +62,12 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
     st.info(cocktail.get("strInstructions", "No instructions available."))
 
 # --- UI: Ingredient selection ---
-st.markdown("### What ingredients do you have?")
+st.markdown("### What ingredients do you have in mind?")
 ingredients = fetch_ingredients()
 selected_ingredients = st.multiselect(
     "Select your available ingredients:",
     ingredients,
-    help="These are the ingredients you currently have."
+    help="Pick ingredients you're interested in — what you have or want to explore!"
 )
 
 # --- Action Buttons ---
