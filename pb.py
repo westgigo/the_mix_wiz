@@ -20,6 +20,20 @@ def fetch_glasses():
     data = response.json()
     return sorted([item['strGlass'] for item in data['drinks']])
 
+@st.cache_data
+def fetch_categories():
+    url = "https://www.thecocktaildb.com/api/json/v2/961249867/list.php?c=list"
+    response = requests.get(url)
+    data = response.json()
+    return sorted([item['strCategory'] for item in data['drinks']])
+
+@st.cache_data
+def fetch_alcohol_types():
+    url = "https://www.thecocktaildb.com/api/json/v2/961249867/list.php?a=list"
+    response = requests.get(url)
+    data = response.json()
+    return sorted([item['strAlcoholic'] for item in data['drinks']])
+
 # --- Fetch all cocktails from a-z ---
 @st.cache_data
 def fetch_all_cocktails():
@@ -64,7 +78,7 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
     st.markdown("### Instructions:")
     st.info(cocktail.get("strInstructions", "No instructions available."))
 
-# --- UI: Ingredient selection ---
+# --- UI: Filters ---
 st.markdown("### What ingredients do you have?")
 ingredients = fetch_ingredients()
 selected_ingredients = st.multiselect(
@@ -78,8 +92,28 @@ glass_filter = st.selectbox(
     ["Any"] + fetch_glasses()
 )
 
+category_filter = st.selectbox(
+    "Optional: Choose a category (or leave empty):",
+    ["Any"] + fetch_categories()
+)
+
+alcohol_filter = st.selectbox(
+    "Optional: Choose alcohol content:",
+    ["Any"] + fetch_alcohol_types()
+)
+
 # --- Action Buttons ---
 col1, col2, col3, col4 = st.columns(4)
+
+# --- Apply filters ---
+def apply_filters(cocktails):
+    if glass_filter != "Any":
+        cocktails = [c for c in cocktails if c.get('strGlass') == glass_filter]
+    if category_filter != "Any":
+        cocktails = [c for c in cocktails if c.get('strCategory') == category_filter]
+    if alcohol_filter != "Any":
+        cocktails = [c for c in cocktails if c.get('strAlcoholic') == alcohol_filter]
+    return cocktails
 
 if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of your ingredients (or none)"):
     with st.spinner("Mixing magic..."):
@@ -96,8 +130,7 @@ if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of you
 
         all_cocktails = fetch_all_cocktails()
         filtered = [d for d in all_cocktails if d['idDrink'] in ids]
-        if glass_filter != "Any":
-            filtered = [d for d in filtered if d.get('strGlass') == glass_filter]
+        filtered = apply_filters(filtered)
 
     if not filtered:
         st.error("😥 No cocktails found with those ingredients.")
@@ -110,8 +143,7 @@ if col2.button("📋 Show all I can make", help="Only cocktails you can make 100
         all_cocktails = fetch_all_cocktails()
         normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
         possible = [c for c in all_cocktails if all(i in normalized for i in extract_ingredients(c))]
-        if glass_filter != "Any":
-            possible = [c for c in possible if c.get('strGlass') == glass_filter]
+        possible = apply_filters(possible)
 
     if not possible:
         st.error("🙁 You can't fully make any cocktails with just those.")
@@ -135,8 +167,7 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
 
         all_cocktails = fetch_all_cocktails()
         filtered = [d for d in all_cocktails if d['idDrink'] in ids]
-        if glass_filter != "Any":
-            filtered = [d for d in filtered if d.get('strGlass') == glass_filter]
+        filtered = apply_filters(filtered)
 
         def count_missing(c):
             return len([i for i in extract_ingredients(c) if i not in normalized])
@@ -163,8 +194,7 @@ if col4.button("🌟 More magic", help="Show latest and popular cocktails just f
             if data['drinks']:
                 cocktails.extend(data['drinks'])
 
-        if glass_filter != "Any":
-            cocktails = [c for c in cocktails if c.get('strGlass') == glass_filter]
+        cocktails = apply_filters(cocktails)
 
     if not cocktails:
         st.error("😞 Couldn't fetch any popular or new drinks.")
