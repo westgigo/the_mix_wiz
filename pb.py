@@ -13,7 +13,7 @@ def fetch_ingredients():
     data = response.json()
     return sorted([item['strIngredient1'] for item in data['drinks']])
 
-# --- Fetch all cocktails from a-z ---
+# --- Fetch all cocktails from A-Z ---
 @st.cache_data
 def fetch_all_cocktails():
     cocktails = []
@@ -57,21 +57,27 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
     st.markdown("### Instructions:")
     st.info(cocktail.get("strInstructions", "No instructions available."))
 
-# --- UI: Filters ---
-st.markdown("### What ingredients do you have?")
-ingredients = fetch_ingredients()
-selected_ingredients = st.multiselect(
-    "Select your available ingredients:",
-    ingredients,
-    help="Pick ingredients you're interested in — what you have or want to explore!"
+# --- Ingredient selection (shared across pages) ---
+with st.expander("🔧 Select Your Ingredients"):
+    ingredients = fetch_ingredients()
+    selected_ingredients = st.multiselect(
+        "Pick what you have or want to explore:",
+        ingredients,
+        help="Select your available ingredients.",
+    )
+    normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
+
+# --- Top Navigation Replacement ---
+page = st.radio(
+    "Choose a page:",
+    ["🥂 Surprise Me", "📋 What Can I Make", "🔍 Explore Ingredients", "🌟 Popular Cocktails", "🍸 Cocktail Explorer"],
+    horizontal=True
 )
 
-# --- Action Buttons ---
-col1, col2, col3, col4 = st.columns(4)
-
-if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of your ingredients (or none)"):
+# --- Surprise Me Page ---
+if page == "🥂 Surprise Me":
+    st.header("Surprise Me!")
     with st.spinner("Mixing magic..."):
-        normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
         if normalized:
             joined = ",".join(normalized)
             url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
@@ -81,7 +87,6 @@ if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of you
         response = requests.get(url)
         data = response.json()
         ids = [drink['idDrink'] for drink in data['drinks']] if data['drinks'] else []
-
         all_cocktails = fetch_all_cocktails()
         filtered = [d for d in all_cocktails if d['idDrink'] in ids]
 
@@ -91,10 +96,11 @@ if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of you
         chosen = random.choice(filtered)
         show_cocktail(chosen, normalized, show_missing=True)
 
-if col2.button("📋 Show all I can make", help="Only cocktails you can make 100% with what you selected"):
-    with st.spinner("Scanning possibilities..."):
+# --- What Can I Make Page ---
+elif page == "📋 What Can I Make":
+    st.header("Cocktails You Can Fully Make")
+    with st.spinner("Checking recipes..."):
         all_cocktails = fetch_all_cocktails()
-        normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
         possible = [c for c in all_cocktails if all(i in normalized for i in extract_ingredients(c))]
 
     if not possible:
@@ -104,9 +110,10 @@ if col2.button("📋 Show all I can make", help="Only cocktails you can make 100
             show_cocktail(cocktail, normalized, show_missing=False)
             st.markdown("---")
 
-if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using ANY of your selected ingredients"):
-    with st.spinner("Exploring cocktail space..."):
-        normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
+# --- Explore with My Ingredients Page ---
+elif page == "🔍 Explore Ingredients":
+    st.header("Explore with Your Ingredients")
+    with st.spinner("Exploring..."):
         if normalized:
             joined = ",".join(normalized)
             url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
@@ -116,7 +123,6 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
         response = requests.get(url)
         data = response.json()
         ids = [drink['idDrink'] for drink in data['drinks']] if data['drinks'] else []
-
         all_cocktails = fetch_all_cocktails()
         filtered = [d for d in all_cocktails if d['idDrink'] in ids]
 
@@ -132,8 +138,10 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
             show_cocktail(cocktail, normalized, show_missing=True)
             st.markdown("---")
 
-if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cocktails just for fun"):
-    with st.spinner("Fetching fresh mixes..."):
+# --- Popular Cocktails Page ---
+elif page == "🌟 Popular Cocktails":
+    st.header("Popular & Latest Cocktails")
+    with st.spinner("Fetching crowd favourites..."):
         urls = [
             "https://www.thecocktaildb.com/api/json/v2/961249867/latest.php",
             "https://www.thecocktaildb.com/api/json/v2/961249867/popular.php"
@@ -152,14 +160,14 @@ if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cock
             show_cocktail(cocktail, [], show_missing=False)
             st.markdown("---")
 
-# --- Manual Cocktail Explorer Dropdown ---
-st.markdown("### 🍸 Explore All Cocktails")
-all_cocktails = fetch_all_cocktails()
-all_names = sorted([(c['strDrink'], c['idDrink']) for c in all_cocktails])
-drink_lookup = {id_: c for c in all_cocktails for _, id_ in [ (c['strDrink'], c['idDrink']) ]}
+# --- Manual Explorer Dropdown Page ---
+elif page == "🍸 Cocktail Explorer":
+    st.header("Explore All Cocktails")
+    all_cocktails = fetch_all_cocktails()
+    all_names = sorted([(c['strDrink'], c['idDrink']) for c in all_cocktails])
+    selected = st.selectbox("Select a cocktail to view:", ["None"] + [name for name, _ in all_names])
 
-selected = st.selectbox("Select a cocktail to view:", ["None"] + [name for name, _ in all_names])
-if selected != "None":
-    cocktail = next((c for c in all_cocktails if c['strDrink'] == selected), None)
-    if cocktail:
-        show_cocktail(cocktail, user_ingredients=[], show_missing=False)
+    if selected != "None":
+        cocktail = next((c for c in all_cocktails if c['strDrink'] == selected), None)
+        if cocktail:
+            show_cocktail(cocktail, user_ingredients=[], show_missing=False)
