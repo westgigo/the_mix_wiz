@@ -166,7 +166,11 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
             try:
                 response = requests.get(url)
                 data = response.json()
-                ids = [drink['idDrink'] for drink in data.get('drinks') or []]
+                drinks = data.get("drinks")
+                if isinstance(drinks, list):
+                    ids = [drink["idDrink"] for drink in drinks if isinstance(drink, dict)]
+                else:
+                    ids = []
             except Exception as e:
                 st.error(f"⚠️ API error: {e}")
                 ids = []
