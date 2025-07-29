@@ -11,9 +11,9 @@ def fetch_ingredients():
     url = "https://www.thecocktaildb.com/api/json/v2/961249867/list.php?i=list"
     response = requests.get(url)
     data = response.json()
-    return sorted([item['strIngredient1'] for item in data['drinks']])
+    return sorted([item['strIngredient1'] for item in data.get('drinks') or []])
 
-# --- Fetch all cocktails from a-z ---
+# --- Fetch all cocktails from A-Z ---
 @st.cache_data
 def fetch_all_cocktails():
     cocktails = []
@@ -21,7 +21,7 @@ def fetch_all_cocktails():
         url = f"https://www.thecocktaildb.com/api/json/v2/961249867/search.php?f={letter}"
         response = requests.get(url)
         data = response.json()
-        if data['drinks']:
+        if data.get('drinks'):
             cocktails.extend(data['drinks'])
     return cocktails
 
@@ -45,17 +45,40 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
         ing = cocktail.get(f"strIngredient{i}")
         meas = cocktail.get(f"strMeasure{i}")
         if ing and ing.strip():
-            ing_normalized = ing.strip().lower().replace(" ", "_")
-            if ing_normalized not in user_ingredients:
-                missing.append(ing.strip())
-            line = f"- {meas.strip()} {ing.strip()}" if meas else f"- {ing.strip()}"
-            st.markdown(line)
+            ing_clean = ing.strip()
+            ing_normalized = ing_clean.lower().replace(" ", "_")
+            is_missing = ing_normalized not in user_ingredients
+
+            if is_missing:
+                missing.append(ing_clean)
+
+            # Ingredient image
+            ing_image_url = f"https://www.thecocktaildb.com/images/ingredients/{ing_clean.replace(' ', '%20')}-small.png"
+            display_text = f"{meas.strip()} {ing_clean}" if meas else ing_clean
+
+            # Style red for missing ingredients
+            text_color = "red" if is_missing and show_missing else "inherit"
+
+            # Render ingredient with image and fallback
+            st.markdown(
+                f"""
+                <div style='display: flex; align-items: center; margin-bottom: 4px; color: {text_color};'>
+                    <img src="{ing_image_url}" width="30" height="30"
+                         style="margin-right: 10px; border-radius: 4px;"
+                         onerror="this.style.display='none';">
+                    <span>{display_text}</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     if show_missing and missing:
         st.warning(f"⚠️ You're missing {len(missing)} ingredient(s): {', '.join(missing)}")
 
     st.markdown("### Instructions:")
     st.info(cocktail.get("strInstructions", "No instructions available."))
+
+
 
 # --- UI: Filters ---
 st.markdown("### What ingredients do you have?")
@@ -65,35 +88,56 @@ selected_ingredients = st.multiselect(
     ingredients,
     help="Pick ingredients you're interested in — what you have or want to explore!"
 )
+normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
 
 # --- Action Buttons ---
 col1, col2, col3, col4 = st.columns(4)
 
+# --- Surprise Me ---
 if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of your ingredients (or none)"):
-    with st.spinner("Mixing magic..."):
-        normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
-        if normalized:
+    if normalized:
+        with st.spinner("Mixing magic with your ingredients..."):
             joined = ",".join(normalized)
             url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
+
+            try:
+                response = requests.get(url)
+                data = response.json()
+                drinks = data.get("drinks")
+                if isinstance(drinks, list):
+                    ids = [drink["idDrink"] for drink in drinks if isinstance(drink, dict)]
+                else:
+                    ids = []
+            except Exception as e:
+                st.error(f"⚠️ API error: {e}")
+                ids = []
+
+            all_cocktails = fetch_all_cocktails()
+            filtered = [d for d in all_cocktails if d['idDrink'] in ids]
+
+        if not filtered:
+            st.error("😥 No cocktails found with those ingredients.")
         else:
-            url = "https://www.thecocktaildb.com/api/json/v2/961249867/randomselection.php"
+            chosen = random.choice(filtered)
+            show_cocktail(chosen, normalized, show_missing=True)
 
-        response = requests.get(url)
-        data = response.json()
-        ids = [drink['idDrink'] for drink in data['drinks']] if data['drinks'] else []
-
-        all_cocktails = fetch_all_cocktails()
-        filtered = [d for d in all_cocktails if d['idDrink'] in ids]
-
-    if not filtered:
-        st.error("😥 No cocktails found with those ingredients.")
     else:
-        chosen = random.choice(filtered)
-        show_cocktail(chosen, normalized, show_missing=True)
+        with st.spinner("Mixing magic at random..."):
+            try:
+                response = requests.get("https://www.thecocktaildb.com/api/json/v1/1/random.php")
+                data = response.json()
+                cocktail = data.get('drinks', [None])[0]
+            except Exception as e:
+                cocktail = None
+                st.error(f"⚠️ Could not fetch a random cocktail: {e}")
 
+        if not cocktail:
+            st.error("😵 Couldn't fetch a random cocktail.")
+        else:
+            show_cocktail(cocktail, user_ingredients=[], show_missing=False)
+
+# --- Show All I Can Make ---
 if col2.button("📋 Show all I can make", help="Only cocktails you can make 100% with what you selected"):
-    normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
-
     if not normalized:
         st.info("🔍 Please select one or more ingredients to see what you can make.")
     else:
@@ -108,9 +152,8 @@ if col2.button("📋 Show all I can make", help="Only cocktails you can make 100
                 show_cocktail(cocktail, normalized, show_missing=False)
                 st.markdown("---")
 
+# --- Explore With Ingredients ---
 if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using ANY of your selected ingredients"):
-    normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
-
     if not normalized:
         st.info("🔍 Please select at least one ingredient to explore cocktails.")
     else:
@@ -118,9 +161,13 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
             joined = ",".join(normalized)
             url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
 
-            response = requests.get(url)
-            data = response.json()
-            ids = [drink['idDrink'] for drink in data.get('drinks') or []]
+            try:
+                response = requests.get(url)
+                data = response.json()
+                ids = [drink['idDrink'] for drink in data.get('drinks') or []]
+            except Exception as e:
+                st.error(f"⚠️ API error: {e}")
+                ids = []
 
             all_cocktails = fetch_all_cocktails()
             filtered = [d for d in all_cocktails if d['idDrink'] in ids]
@@ -137,7 +184,7 @@ if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using 
                 show_cocktail(cocktail, normalized, show_missing=True)
                 st.markdown("---")
 
-
+# --- Popular Cocktails ---
 if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cocktails just for fun"):
     with st.spinner("Fetching fresh mixes..."):
         urls = [
@@ -146,10 +193,13 @@ if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cock
         ]
         cocktails = []
         for url in urls:
-            res = requests.get(url)
-            data = res.json()
-            if data['drinks']:
-                cocktails.extend(data['drinks'])
+            try:
+                res = requests.get(url)
+                data = res.json()
+                if data.get('drinks'):
+                    cocktails.extend(data['drinks'])
+            except Exception as e:
+                st.error(f"⚠️ Couldn't fetch from {url}: {e}")
 
     if not cocktails:
         st.error("😞 Couldn't fetch any popular or new drinks.")
@@ -161,8 +211,6 @@ if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cock
 # --- Manual Cocktail Explorer Dropdown ---
 st.markdown("### 🍸 Explore All Cocktails")
 all_cocktails = fetch_all_cocktails()
-
-# Create a lookup table for (name -> id)
 cocktail_lookup = {f"{c['strDrink']} ({c['idDrink']})": c['idDrink'] for c in all_cocktails}
 options = ["None"] + list(cocktail_lookup.keys())
 
@@ -173,5 +221,3 @@ if selected_label != "None":
     cocktail = next((c for c in all_cocktails if c['idDrink'] == selected_id), None)
     if cocktail:
         show_cocktail(cocktail, user_ingredients=[], show_missing=False)
-
-
