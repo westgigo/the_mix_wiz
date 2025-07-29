@@ -5,6 +5,10 @@ import random
 st.set_page_config(page_title="The Mix Wiz", layout="centered")
 st.title("🪄 The Mix Wiz")
 
+# --- Ingredient selection state ---
+if "selected_ingredients" not in st.session_state:
+    st.session_state["selected_ingredients"] = []
+
 # --- Fetch and cache ingredients ---
 @st.cache_data
 def fetch_ingredients():
@@ -53,7 +57,7 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
                 missing.append(ing_clean)
 
             # Ingredient image
-            ing_image_url = f"https://www.thecocktaildb.com/images/ingredients/{ing_clean.replace(' ', '%20')}-small.png"
+            ing_image_url = f"https://www.thecocktaildb.com/images/ingredients/{ing_clean.replace(' ', '%20')}-medium.png"
             display_text = f"{meas.strip()} {ing_clean}" if meas else ing_clean
 
             # Style red for missing ingredients
@@ -79,15 +83,24 @@ def show_cocktail(cocktail, user_ingredients, show_missing=True):
     st.info(cocktail.get("strInstructions", "No instructions available."))
 
 
-
 # --- UI: Filters ---
-st.markdown("### What ingredients do you have?")
+col_title, col_clear = st.columns([10, 1])
+with col_title:
+    st.markdown("### What ingredients do you have?")
+with col_clear:
+    clear_clicked = st.button("🔄", help="Clear ingredient selection")
+    if clear_clicked:
+        st.session_state["selected_ingredients"] = []
+        st.rerun()
+
 ingredients = fetch_ingredients()
 selected_ingredients = st.multiselect(
     "Select your available ingredients:",
     ingredients,
+    default=st.session_state["selected_ingredients"],
     help="Pick ingredients you're interested in — what you have or want to explore!"
 )
+st.session_state["selected_ingredients"] = selected_ingredients
 normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
 
 # --- Action Buttons ---
