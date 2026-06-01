@@ -1,229 +1,454 @@
-import streamlit as st
-import requests
+import json
 import random
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="The Mix Wiz", layout="centered")
+import requests
+import streamlit as st
+from streamlit_cookies_controller import CookieController
+
+
+st.set_page_config(page_title="The Mix Wiz", page_icon="🪄", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 1180px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    div[data-testid="stHorizontalBlock"] {
+        align-items: stretch;
+    }
+    div.stButton > button {
+        min-height: 3rem;
+        border-radius: 8px;
+        font-weight: 650;
+    }
+    div[data-testid="stImage"] img {
+        border-radius: 8px;
+    }
+    .drink-card {
+        border: 1px solid rgba(49, 51, 63, 0.18);
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.75rem 0 1.25rem;
+        background: rgba(250, 250, 250, 0.65);
+    }
+    .ingredient-row {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        margin-bottom: 0.3rem;
+    }
+    .ingredient-row img {
+        width: 32px;
+        height: 32px;
+        border-radius: 4px;
+        object-fit: contain;
+    }
+    .missing {
+        color: #b42318;
+        font-weight: 600;
+    }
+    div[data-testid="element-container"]:has(iframe[title="streamlit_cookies_controller.cookie_controller.cookie_controller"]) {
+        display: none;
+    }
+    @media (max-width: 700px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🪄 The Mix Wiz")
 
-# --- Ingredient selection state ---
-if "selected_ingredients" not in st.session_state:
-    st.session_state["selected_ingredients"] = []
+FAVOURITES_COOKIE = "mixwiz_favourites"
 
-# --- Fetch and cache ingredients ---
-@st.cache_data
+
+def normalise_ingredient(ingredient):
+    return ingredient.strip().lower().replace(" ", "_")
+
+
+@st.cache_data(ttl=60 * 60 * 24)
+def fetch_json(url):
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+@st.cache_data(ttl=60 * 60 * 24)
 def fetch_ingredients():
     url = "https://www.thecocktaildb.com/api/json/v2/961249867/list.php?i=list"
-    response = requests.get(url)
-    data = response.json()
-    return sorted([item['strIngredient1'] for item in data.get('drinks') or []])
+    data = fetch_json(url)
+    return sorted([item["strIngredient1"] for item in data.get("drinks") or []])
 
-# --- Fetch all cocktails from A-Z ---
-@st.cache_data
+
+@st.cache_data(ttl=60 * 60 * 24)
 def fetch_all_cocktails():
     cocktails = []
+    seen_ids = set()
+
     for letter in "abcdefghijklmnopqrstuvwxyz":
         url = f"https://www.thecocktaildb.com/api/json/v2/961249867/search.php?f={letter}"
-        response = requests.get(url)
-        data = response.json()
-        if data.get('drinks'):
-            cocktails.extend(data['drinks'])
+        data = fetch_json(url)
+        for cocktail in data.get("drinks") or []:
+            cocktail_id = cocktail.get("idDrink")
+            if cocktail_id and cocktail_id not in seen_ids:
+                cocktails.append(cocktail)
+                seen_ids.add(cocktail_id)
+
     return cocktails
 
-# --- Extract ingredients from a cocktail object ---
+
+def fetch_random_cocktail():
+    data = fetch_json("https://www.thecocktaildb.com/api/json/v1/1/random.php")
+    return data.get("drinks", [None])[0]
+
+
 def extract_ingredients(cocktail):
     ingredients = []
     for i in range(1, 16):
-        ing = cocktail.get(f"strIngredient{i}")
-        if ing and ing.strip():
-            ingredients.append(ing.strip().lower().replace(" ", "_"))
+        ingredient = cocktail.get(f"strIngredient{i}")
+        if ingredient and ingredient.strip():
+            ingredients.append(normalise_ingredient(ingredient))
     return ingredients
 
-# --- Display cocktail ---
-def show_cocktail(cocktail, user_ingredients, show_missing=True):
-    st.subheader(cocktail['strDrink'])
-    st.image(cocktail['strDrinkThumb'], width=300)
 
-    st.markdown("### Ingredients:")
+def load_favourites():
+    raw_favourites = cookies.get(FAVOURITES_COOKIE)
+    try:
+        favourites = json.loads(raw_favourites) if raw_favourites else []
+    except (TypeError, json.JSONDecodeError):
+        favourites = []
+
+    return [item for item in favourites if isinstance(item, str)]
+
+
+def save_favourites():
+    cookies.set(
+        FAVOURITES_COOKIE,
+        json.dumps(st.session_state["favourites"]),
+        expires=datetime.now() + timedelta(days=365),
+        max_age=60 * 60 * 24 * 365,
+        same_site="lax",
+        secure=True,
+    )
+
+
+def toggle_favourite(cocktail_id):
+    favourites = set(st.session_state["favourites"])
+    if cocktail_id in favourites:
+        favourites.remove(cocktail_id)
+    else:
+        favourites.add(cocktail_id)
+
+    st.session_state["favourites"] = sorted(favourites)
+    save_favourites()
+
+
+def set_view(view_name):
+    st.session_state["view"] = view_name
+
+
+def ingredient_display_rows(cocktail, user_ingredients, show_missing):
     missing = []
+
     for i in range(1, 16):
-        ing = cocktail.get(f"strIngredient{i}")
-        meas = cocktail.get(f"strMeasure{i}")
-        if ing and ing.strip():
-            ing_clean = ing.strip()
-            ing_normalized = ing_clean.lower().replace(" ", "_")
-            is_missing = ing_normalized not in user_ingredients
+        ingredient = cocktail.get(f"strIngredient{i}")
+        measure = cocktail.get(f"strMeasure{i}")
+        if not ingredient or not ingredient.strip():
+            continue
 
-            if is_missing:
-                missing.append(ing_clean)
+        ingredient_clean = ingredient.strip()
+        ingredient_normalised = normalise_ingredient(ingredient_clean)
+        is_missing = ingredient_normalised not in user_ingredients
 
-            # Ingredient image
-            ing_image_url = f"https://www.thecocktaildb.com/images/ingredients/{ing_clean.replace(' ', '%20')}-medium.png"
-            display_text = f"{meas.strip()} {ing_clean}" if meas else ing_clean
+        if is_missing:
+            missing.append(ingredient_clean)
 
-            # Style red for missing ingredients
-            text_color = "red" if is_missing and show_missing else "inherit"
+        image_url = (
+            "https://www.thecocktaildb.com/images/ingredients/"
+            f"{ingredient_clean.replace(' ', '%20')}-medium.png"
+        )
+        display_text = f"{measure.strip()} {ingredient_clean}" if measure else ingredient_clean
+        text_class = "missing" if is_missing and show_missing else ""
 
-            # Render ingredient with image and fallback
-            st.markdown(
-                f"""
-                <div style='display: flex; align-items: center; margin-bottom: 4px; color: {text_color};'>
-                    <img src="{ing_image_url}" width="30" height="30"
-                         style="margin-right: 10px; border-radius: 4px;"
-                         onerror="this.style.display='none';">
-                    <span>{display_text}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
+        st.markdown(
+            f"""
+            <div class="ingredient-row {text_class}">
+                <img src="{image_url}" onerror="this.style.display='none';">
+                <span>{display_text}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    return missing
+
+
+def show_cocktail(cocktail, user_ingredients, show_missing=True, key_suffix=""):
+    cocktail_id = cocktail["idDrink"]
+    favourite_key = f"fav_{cocktail_id}_{key_suffix}"
+    is_favourite = cocktail_id in st.session_state["favourites"]
+
+    with st.container():
+        st.markdown('<div class="drink-card">', unsafe_allow_html=True)
+
+        title_col, fav_col = st.columns([8, 1])
+        with title_col:
+            st.subheader(cocktail["strDrink"])
+        with fav_col:
+            st.button(
+                "★" if is_favourite else "☆",
+                key=favourite_key,
+                help="Save to favourites on this device",
+                on_click=toggle_favourite,
+                args=(cocktail_id,),
+                use_container_width=True,
             )
 
-    if show_missing and missing:
-        st.warning(f"⚠️ You're missing {len(missing)} ingredient(s): {', '.join(missing)}")
+        image_col, details_col = st.columns([1, 2])
+        with image_col:
+            st.image(cocktail["strDrinkThumb"], use_container_width=True)
+        with details_col:
+            st.markdown("#### Ingredients")
+            missing = ingredient_display_rows(cocktail, user_ingredients, show_missing)
 
-    st.markdown("### Instructions:")
-    st.info(cocktail.get("strInstructions", "No instructions available."))
+            if show_missing and missing:
+                st.warning(
+                    f"You're missing {len(missing)} ingredient(s): {', '.join(missing)}"
+                )
+
+            st.markdown("#### Instructions")
+            st.info(cocktail.get("strInstructions", "No instructions available."))
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
-# --- UI: Filters ---
-col_title, col_clear = st.columns([10, 1])
-with col_title:
-    st.markdown("### What ingredients do you have?")
-#with col_clear:
-#    clear_clicked = st.button("🔄", help="Clear ingredient selection")
-#    if clear_clicked:
-#        st.session_state["selected_ingredients"] = []
-#        st.rerun()
+def show_cocktail_list(cocktails, user_ingredients, show_missing=True, key_prefix="list"):
+    for index, cocktail in enumerate(cocktails):
+        show_cocktail(
+            cocktail,
+            user_ingredients,
+            show_missing=show_missing,
+            key_suffix=f"{key_prefix}_{index}",
+        )
+
+
+cookies = CookieController()
+
+if "selected_ingredients" not in st.session_state:
+    st.session_state["selected_ingredients"] = []
+if "favourites" not in st.session_state:
+    st.session_state["favourites"] = load_favourites()
+if "view" not in st.session_state:
+    st.session_state["view"] = "explore"
 
 ingredients = fetch_ingredients()
+all_cocktails = fetch_all_cocktails()
+cocktails_by_id = {cocktail["idDrink"]: cocktail for cocktail in all_cocktails}
+
+st.markdown("### What ingredients do you have?")
 selected_ingredients = st.multiselect(
     "Select your available ingredients:",
     ingredients,
-    default=st.session_state["selected_ingredients"],
-    help="Pick ingredients you're interested in — what you have or want to explore!"
+    key="selected_ingredients",
+    placeholder="Search ingredients",
+    help="Pick ingredients you have or want to explore.",
 )
-st.session_state["selected_ingredients"] = selected_ingredients
-normalized = [ing.lower().replace(" ", "_") for ing in selected_ingredients]
+normalised_ingredients = [normalise_ingredient(item) for item in selected_ingredients]
 
-# --- Action Buttons ---
-col1, col2, col3, col4 = st.columns(4)
+action_cols = st.columns(4)
+with action_cols[0]:
+    st.button(
+        "🥂 Surprise me",
+        help="Pick a random cocktail using any of your ingredients.",
+        on_click=set_view,
+        args=("surprise",),
+        use_container_width=True,
+    )
+with action_cols[1]:
+    st.button(
+        "📋 I can make",
+        help="Only cocktails you can make 100% with what you selected.",
+        on_click=set_view,
+        args=("make",),
+        use_container_width=True,
+    )
+with action_cols[2]:
+    st.button(
+        "🔍 Explore",
+        help="Browse cocktails using any of your selected ingredients.",
+        on_click=set_view,
+        args=("explore",),
+        use_container_width=True,
+    )
+with action_cols[3]:
+    st.button(
+        "🌟 Popular",
+        help="Show popular and latest cocktails.",
+        on_click=set_view,
+        args=("popular",),
+        use_container_width=True,
+    )
 
-# --- Surprise Me ---
-if col1.button("🥂 Surprise me", help="Pick a random cocktail using ANY of your ingredients (or none)"):
-    if normalized:
-        with st.spinner("Mixing magic with your ingredients..."):
-            # Fetch ALL cocktails
-            all_cocktails = fetch_all_cocktails()
+find_tab, favourites_tab, all_tab = st.tabs(["Find drinks", "Favourites", "All cocktails"])
 
-            # Match ANY of the selected ingredients
-            matching = [c for c in all_cocktails if any(i in normalized for i in extract_ingredients(c))]
+with find_tab:
+    view = st.session_state["view"]
 
-        if not matching:
-            st.error("😥 No cocktails found that use any of those ingredients.")
-        else:
-            chosen = random.choice(matching)
-            show_cocktail(chosen, normalized, show_missing=True)
-    else:
-        # No ingredients selected → fallback to true random
-        with st.spinner("Mixing magic at random..."):
-            try:
-                response = requests.get("https://www.thecocktaildb.com/api/json/v1/1/random.php")
-                data = response.json()
-                cocktail = data.get('drinks', [None])[0]
-            except Exception as e:
-                cocktail = None
-                st.error(f"⚠️ Could not fetch a random cocktail: {e}")
-
-        if not cocktail:
-            st.error("😵 Couldn't fetch a random cocktail.")
-        else:
-            show_cocktail(cocktail, user_ingredients=[], show_missing=False)
-
-
-# --- Show All I Can Make ---
-if col2.button("📋 Show all I can make", help="Only cocktails you can make 100% with what you selected"):
-    if not normalized:
-        st.info("🔍 Please select one or more ingredients to see what you can make.")
-    else:
-        with st.spinner("Scanning possibilities..."):
-            all_cocktails = fetch_all_cocktails()
-            possible = [c for c in all_cocktails if all(i in normalized for i in extract_ingredients(c))]
-
-        if not possible:
-            st.error("🙁 You can't fully make any cocktails with just those.")
-        else:
-            for cocktail in possible:
-                show_cocktail(cocktail, normalized, show_missing=False)
-                st.markdown("---")
-
-# --- Explore With Ingredients ---
-if col3.button("🔍 Explore with my ingredients", help="Browse cocktails using ANY of your selected ingredients"):
-    if not normalized:
-        st.info("🔍 Please select at least one ingredient to explore cocktails.")
-    else:
-        with st.spinner("Exploring cocktail space..."):
-            joined = ",".join(normalized)
-            url = f"https://www.thecocktaildb.com/api/json/v2/961249867/filter.php?i={joined}"
-
-            try:
-                response = requests.get(url)
-                data = response.json()
-                drinks = data.get("drinks")
-                if isinstance(drinks, list):
-                    ids = [drink["idDrink"] for drink in drinks if isinstance(drink, dict)]
+    if view == "surprise":
+        try:
+            with st.spinner("Mixing magic..."):
+                if normalised_ingredients:
+                    matching = [
+                        cocktail
+                        for cocktail in all_cocktails
+                        if any(
+                            ingredient in normalised_ingredients
+                            for ingredient in extract_ingredients(cocktail)
+                        )
+                    ]
+                    cocktail = random.choice(matching) if matching else None
+                    show_missing = True
                 else:
-                    ids = []
-            except Exception as e:
-                st.error(f"⚠️ API error: {e}")
-                ids = []
+                    cocktail = fetch_random_cocktail()
+                    show_missing = False
 
-            all_cocktails = fetch_all_cocktails()
-            filtered = [d for d in all_cocktails if d['idDrink'] in ids]
+            if cocktail:
+                show_cocktail(
+                    cocktail,
+                    normalised_ingredients,
+                    show_missing=show_missing,
+                    key_suffix="surprise",
+                )
+            else:
+                st.error("No cocktails found that use those ingredients.")
+        except requests.RequestException as error:
+            st.error(f"Could not fetch a cocktail: {error}")
 
-            def count_missing(c):
-                return len([i for i in extract_ingredients(c) if i not in normalized])
-
-            sorted_cocktails = sorted(filtered, key=count_missing)
-
-        if not sorted_cocktails:
-            st.error("😥 No matches found.")
+    elif view == "make":
+        if not normalised_ingredients:
+            st.info("Select one or more ingredients to see what you can make.")
         else:
-            for cocktail in sorted_cocktails:
-                show_cocktail(cocktail, normalized, show_missing=True)
-                st.markdown("---")
+            possible = [
+                cocktail
+                for cocktail in all_cocktails
+                if all(
+                    ingredient in normalised_ingredients
+                    for ingredient in extract_ingredients(cocktail)
+                )
+            ]
 
-# --- Popular Cocktails ---
-if col4.button("🌟 Most Popular Cocktails", help="Show latest and popular cocktails just for fun"):
-    with st.spinner("Fetching fresh mixes..."):
-        urls = [
-            "https://www.thecocktaildb.com/api/json/v2/961249867/latest.php",
-            "https://www.thecocktaildb.com/api/json/v2/961249867/popular.php"
-        ]
-        cocktails = []
-        for url in urls:
-            try:
-                res = requests.get(url)
-                data = res.json()
-                if data.get('drinks'):
-                    cocktails.extend(data['drinks'])
-            except Exception as e:
-                st.error(f"⚠️ Couldn't fetch from {url}: {e}")
+            if possible:
+                st.success(f"You can make {len(possible)} cocktail(s).")
+                show_cocktail_list(
+                    possible,
+                    normalised_ingredients,
+                    show_missing=False,
+                    key_prefix="make",
+                )
+            else:
+                st.error("You cannot fully make any cocktails with just those ingredients.")
 
-    if not cocktails:
-        st.error("😞 Couldn't fetch any popular or new drinks.")
+    elif view == "popular":
+        try:
+            with st.spinner("Fetching fresh mixes..."):
+                cocktails = []
+                seen_ids = set()
+                for url in [
+                    "https://www.thecocktaildb.com/api/json/v2/961249867/latest.php",
+                    "https://www.thecocktaildb.com/api/json/v2/961249867/popular.php",
+                ]:
+                    data = fetch_json(url)
+                    for cocktail in data.get("drinks") or []:
+                        cocktail_id = cocktail.get("idDrink")
+                        if cocktail_id and cocktail_id not in seen_ids:
+                            cocktails.append(cocktail)
+                            seen_ids.add(cocktail_id)
+
+            if cocktails:
+                show_cocktail_list(
+                    cocktails,
+                    normalised_ingredients,
+                    show_missing=False,
+                    key_prefix="popular",
+                )
+            else:
+                st.error("Could not fetch popular or new drinks.")
+        except requests.RequestException as error:
+            st.error(f"Could not fetch popular drinks: {error}")
+
     else:
-        for cocktail in cocktails:
-            show_cocktail(cocktail, [], show_missing=False)
-            st.markdown("---")
+        if not normalised_ingredients:
+            st.info("Select at least one ingredient, then use Explore or Surprise me.")
+        else:
+            def count_missing(cocktail):
+                return len(
+                    [
+                        ingredient
+                        for ingredient in extract_ingredients(cocktail)
+                        if ingredient not in normalised_ingredients
+                    ]
+                )
 
-# --- Manual Cocktail Explorer Dropdown ---
-st.markdown("### 🍸 Explore All Cocktails")
-all_cocktails = fetch_all_cocktails()
-cocktail_lookup = {f"{c['strDrink']} ({c['idDrink']})": c['idDrink'] for c in all_cocktails}
-options = ["None"] + list(cocktail_lookup.keys())
+            matching = [
+                cocktail
+                for cocktail in all_cocktails
+                if any(
+                    ingredient in normalised_ingredients
+                    for ingredient in extract_ingredients(cocktail)
+                )
+            ]
+            matching = sorted(matching, key=count_missing)
 
-selected_label = st.selectbox("Select a cocktail to view:", options)
+            if matching:
+                st.success(f"Found {len(matching)} cocktail(s) using your ingredients.")
+                show_cocktail_list(
+                    matching,
+                    normalised_ingredients,
+                    show_missing=True,
+                    key_prefix="explore",
+                )
+            else:
+                st.error("No matches found.")
 
-if selected_label != "None":
-    selected_id = cocktail_lookup[selected_label]
-    cocktail = next((c for c in all_cocktails if c['idDrink'] == selected_id), None)
-    if cocktail:
-        show_cocktail(cocktail, user_ingredients=[], show_missing=False)
+with favourites_tab:
+    favourite_cocktails = [
+        cocktails_by_id[cocktail_id]
+        for cocktail_id in st.session_state["favourites"]
+        if cocktail_id in cocktails_by_id
+    ]
+
+    if favourite_cocktails:
+        st.caption("Saved on this device.")
+        show_cocktail_list(
+            favourite_cocktails,
+            normalised_ingredients,
+            show_missing=False,
+            key_prefix="favourites",
+        )
+    else:
+        st.info("No favourites yet. Use the star on a cocktail to save it here.")
+
+with all_tab:
+    cocktail_lookup = {
+        f"{cocktail['strDrink']} ({cocktail['idDrink']})": cocktail["idDrink"]
+        for cocktail in all_cocktails
+    }
+    options = ["None"] + list(cocktail_lookup.keys())
+    selected_label = st.selectbox("Select a cocktail to view:", options)
+
+    if selected_label != "None":
+        selected_id = cocktail_lookup[selected_label]
+        show_cocktail(
+            cocktails_by_id[selected_id],
+            normalised_ingredients,
+            show_missing=False,
+            key_suffix="manual",
+        )
