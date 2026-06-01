@@ -1,10 +1,9 @@
 import json
 import random
-from datetime import datetime, timedelta
 
 import requests
 import streamlit as st
-from streamlit_cookies_controller import CookieController
+from streamlit_local_storage import LocalStorage
 
 
 st.set_page_config(page_title="The Mix Wiz", page_icon="🪄", layout="wide")
@@ -51,7 +50,7 @@ st.markdown(
         color: #b42318;
         font-weight: 600;
     }
-    div[data-testid="element-container"]:has(iframe[title="streamlit_cookies_controller.cookie_controller.cookie_controller"]) {
+    div[data-testid="element-container"]:has(iframe[title="streamlit_local_storage.st_local_storage"]) {
         display: none;
     }
     @media (max-width: 700px) {
@@ -67,7 +66,7 @@ st.markdown(
 
 st.title("🪄 The Mix Wiz")
 
-FAVOURITES_COOKIE = "mixwiz_favourites"
+FAVOURITES_STORAGE_KEY = "mixwiz_favourites"
 
 
 def normalise_ingredient(ingredient):
@@ -119,25 +118,37 @@ def extract_ingredients(cocktail):
     return ingredients
 
 
-def load_favourites():
-    raw_favourites = cookies.get(FAVOURITES_COOKIE)
+def parse_favourites(raw_favourites):
     try:
-        favourites = json.loads(raw_favourites) if raw_favourites else []
+        if isinstance(raw_favourites, str):
+            favourites = json.loads(raw_favourites) if raw_favourites else []
+        elif isinstance(raw_favourites, list):
+            favourites = raw_favourites
+        else:
+            favourites = []
     except (TypeError, json.JSONDecodeError):
         favourites = []
 
     return [item for item in favourites if isinstance(item, str)]
 
 
+def load_favourites():
+    return parse_favourites(local_storage.getItem(FAVOURITES_STORAGE_KEY))
+
+
 def save_favourites():
-    cookies.set(
-        FAVOURITES_COOKIE,
-        json.dumps(st.session_state["favourites"]),
-        expires=datetime.now() + timedelta(days=365),
-        max_age=60 * 60 * 24 * 365,
-        same_site="lax",
-        secure=True,
-    )
+    st.session_state["storage_write_count"] += 1
+    storage_key = f"save_favourites_{st.session_state['storage_write_count']}"
+    favourites = st.session_state["favourites"]
+
+    if favourites:
+        local_storage.setItem(
+            FAVOURITES_STORAGE_KEY,
+            json.dumps(favourites),
+            key=storage_key,
+        )
+    else:
+        local_storage.eraseItem(FAVOURITES_STORAGE_KEY, key=storage_key)
 
 
 def toggle_favourite(cocktail_id):
@@ -240,10 +251,12 @@ def show_cocktail_list(cocktails, user_ingredients, show_missing=True, key_prefi
         )
 
 
-cookies = CookieController()
+local_storage = LocalStorage(key="mixwiz_storage")
 
 if "selected_ingredients" not in st.session_state:
     st.session_state["selected_ingredients"] = []
+if "storage_write_count" not in st.session_state:
+    st.session_state["storage_write_count"] = 0
 if "favourites" not in st.session_state:
     st.session_state["favourites"] = load_favourites()
 if "view" not in st.session_state:
@@ -419,6 +432,11 @@ with find_tab:
                 st.error("No matches found.")
 
 with favourites_tab:
+    st.caption(
+        "Favourites are saved only in this browser on this device. "
+        "The Mix Wiz does not send them to, or store them on, a platform account or database."
+    )
+
     favourite_cocktails = [
         cocktails_by_id[cocktail_id]
         for cocktail_id in st.session_state["favourites"]
@@ -426,7 +444,6 @@ with favourites_tab:
     ]
 
     if favourite_cocktails:
-        st.caption("Saved on this device.")
         show_cocktail_list(
             favourite_cocktails,
             normalised_ingredients,
